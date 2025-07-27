@@ -208,7 +208,7 @@ class PointNetPartSegmentation(nn.Module):
         return logits, feat_dict["input_transform"], feat_dict["feature_transform"]
     
 
-class PointNetAutoencoder(nn.Module):
+class PointNetAutoEncoder(nn.Module):
     def __init__(self, num_points: int = 1024, 
                  latent_dim: int = 1024, 
                  use_skip: bool = True, 

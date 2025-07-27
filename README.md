@@ -18,8 +18,14 @@ This implementation is intended for educational and research purposes and aims t
 
 ## Requirements
 
-Install dependencies using pip:
+- CUDA: 12.1
+
+
+Install dependencies using conda
 
 ```bash
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate pointnet_env
 ```
+
+The project uses pytorch3d chamfer distance, but if pytorch3d cant be used (windows) then you can utilise the implementation provided in utils.loss. However, its not recommended as its not optimised for large batches. s

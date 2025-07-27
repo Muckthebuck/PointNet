@@ -1,0 +1,23 @@
+name: pointnet_env
+channels:
+  - pytorch3d
+  - fvcore
+  - iopath
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch=2.2.2
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1  # This ensures PyTorch uses CUDA 12.1
+  - pytorch3d
+  - fvcore
+  - iopath
+  - tqdm
+  - h5py
+  - matplotlib
+  - pip
+  - pip:
+      - numpy

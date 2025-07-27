@@ -4,10 +4,20 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import h5py
-import os
+import subprocess
 
 
 class PointCloudDataset(Dataset):
+    """
+    Generic Dataset class for ShapeNet and ModelNet point cloud datasets.
+
+    Args:
+        dataset_name (str): One of ['shapenet', 'modelnet']
+        phase (str): One of ['train', 'val', 'test']
+        data_dir (str): Path to root data directory
+        url (str, optional): URL for automatic download if dataset is missing
+        from_folder (bool): If True, loads directly from HDF5 folder (for custom datasets)
+    """
     def __init__(
         self,
         dataset_name: str,
@@ -41,35 +51,45 @@ class PointCloudDataset(Dataset):
         if self.dataset_dir.exists():
             return
         if not self.url:
-            raise ValueError("No URL provided for download.")
+            raise ValueError("No URL provided for dataset download.")
         zipfile = Path(self.url).name
-        os.system(f"wget --no-check-certificate {self.url}")
-        os.system(f"unzip {zipfile}")
-        os.system(f"mv {zipfile.replace('.zip', '')} {self.dataset_dir}")
-        os.system(f"rm {zipfile}")
+        subprocess.run(["wget", "--no-check-certificate", self.url])
+        subprocess.run(["unzip", zipfile])
+        extracted_folder = zipfile.replace(".zip", "")
+        subprocess.run(["mv", extracted_folder, str(self.dataset_dir)])
+        Path(zipfile).unlink(missing_ok=True)
 
-    def _load(self) -> Tuple[np.ndarray, np.ndarray, Union[np.ndarray, None]]:
+    def _load(self) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         if self.from_folder:
             return self._load_from_folder()
+
         if self.name == "shapenet":
-            return self._load_from_file_list("pid")
-        if self.name == "modelnet":
-            return self._load_from_file_list("normal", use_val_as_test=True)
+            return self._load_from_file_list(extra_key="pid")
+        elif self.name == "modelnet":
+            return self._load_from_file_list(extra_key="normal", use_val_as_test=True)
+
         raise ValueError(f"Unsupported dataset: {self.name}")
 
     def _load_from_file_list(
         self, extra_key: str = "", use_val_as_test: bool = False
-    ) -> Tuple[np.ndarray, np.ndarray, Union[np.ndarray, None]]:
+    ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         phase = "test" if use_val_as_test and self.phase == "val" else self.phase
-        file_list = self.dataset_dir / f"{phase}_hdf5_file_list.txt" if self.name == "shapenet" else self.dataset_dir / f"{phase}_files.txt"
+        list_file = (
+            self.dataset_dir / f"{phase}_hdf5_file_list.txt"
+            if self.name == "shapenet"
+            else self.dataset_dir / f"{phase}_files.txt"
+        )
 
-        with open(file_list) as f:
-            files = [self.dataset_dir / Path(line.strip()).name for line in f]
+        if not list_file.exists():
+            raise FileNotFoundError(f"Missing file list: {list_file}")
+
+        with open(list_file) as f:
+            files = [line.strip() for line in f if line.strip()]
 
         data, labels, extras = [], [], []
-
-        for file in files:
-            with h5py.File(file, "r") as f:
+        for path in files:
+            path = self.dataset_dir / Path(path).name
+            with h5py.File(path, "r") as f:
                 data.append(f["data"][:])
                 labels.append(f["label"][:])
                 if extra_key and extra_key in f:
@@ -77,14 +97,15 @@ class PointCloudDataset(Dataset):
 
         return (
             np.concatenate(data).astype(np.float32),
-            np.concatenate(labels).astype(np.int_),
-            np.concatenate(extras).astype(np.int_) if extras else None,
+            np.concatenate(labels).astype(np.int64),
+            np.concatenate(extras).astype(np.int64) if extras else None,
         )
 
-    def _load_from_folder(self) -> Tuple[np.ndarray, np.ndarray, Union[np.ndarray, None]]:
+    def _load_from_folder(self) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         folder = self.dataset_dir / self.phase
         if not folder.exists():
-            raise FileNotFoundError(f"Missing folder: {folder}")
+            raise FileNotFoundError(f"Missing dataset folder: {folder}")
+
         data, labels, extras = [], [], []
         for file in sorted(folder.glob("*.h5")):
             with h5py.File(file, "r") as f:
@@ -95,25 +116,28 @@ class PointCloudDataset(Dataset):
 
         return (
             np.concatenate(data).astype(np.float32),
-            np.concatenate(labels).astype(np.int_),
-            np.concatenate(extras).astype(np.int_) if extras else None,
+            np.concatenate(labels).astype(np.int64),
+            np.concatenate(extras).astype(np.int64) if extras else None,
         )
 
-    def _normalise(self, pc: np.ndarray) -> np.ndarray:
+    def _normalize(self, pc: np.ndarray) -> np.ndarray:
         pc -= pc.mean(0)
-        pc /= np.max(np.sqrt((pc**2).sum(1)))
-        return pc
+        scale = np.max(np.sqrt((pc ** 2).sum(axis=1)))
+        return pc / scale
 
     def __getitem__(self, idx: int) -> Union[
         Tuple[torch.Tensor, torch.Tensor],
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
     ]:
-        pc = torch.from_numpy(self._normalise(self.data[idx]))
-        label = torch.tensor(self.labels[idx])
+        pc = self._normalize(self.data[idx])
+        pc_tensor = torch.from_numpy(pc)  # (N, 3)
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
+
         if self.name == "shapenet" and self.extra is not None:
-            pc_label = torch.tensor(self.extra[idx])
-            return pc, pc_label, label
-        return pc, label
+            seg_label = torch.tensor(self.extra[idx], dtype=torch.long)
+            return pc_tensor, seg_label, label
+
+        return pc_tensor, label
 
     def __len__(self) -> int:
         return len(self.data)
@@ -127,6 +151,9 @@ def get_data_loaders(
     phases: List[str] = ["train", "val", "test"],
     from_folder: bool = False,
 ) -> Tuple[List[PointCloudDataset], List[DataLoader]]:
+    """
+    Returns dataset objects and their corresponding PyTorch DataLoaders for different phases.
+    """
     datasets, loaders = [], []
     for phase in phases:
         ds = PointCloudDataset(
