@@ -1,4 +1,4 @@
-# PointNet Implementation (WIP)
+# PointNet Implementation
 
 This repository contains a clean, from-scratch implementation of **PointNet**, the deep learning architecture introduced in the paper:
 
